@@ -25,7 +25,7 @@ spec:
     }
 
     environment {
-        IMAGE = "ghcr.io/roryhoulihan/nfty-signal-bridge"
+        IMAGE = "rhoulihan/nfty-signal-bridge"
     }
 
     stages {
@@ -38,11 +38,11 @@ spec:
         stage('Push') {
             steps {
                 withCredentials([usernamePassword(
-                    credentialsId: 'ghcr',
-                    usernameVariable: 'GHCR_USER',
-                    passwordVariable: 'GHCR_TOKEN'
+                    credentialsId: 'dockerhub',
+                    usernameVariable: 'DH_USER',
+                    passwordVariable: 'DH_TOKEN'
                 )]) {
-                    sh 'echo $GHCR_TOKEN | docker login ghcr.io -u $GHCR_USER --password-stdin'
+                    sh 'echo $DH_TOKEN | docker login -u $DH_USER --password-stdin'
                     sh "docker push ${IMAGE}:${GIT_COMMIT[0..6]}"
                 }
             }
