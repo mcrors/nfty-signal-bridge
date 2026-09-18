@@ -1,26 +1,12 @@
 pipeline {
+    // docker-arm64 is the pod template the home-lab Jenkins chart declares. It
+    // holds three containers: jnlp, the Docker daemon, and the Docker client.
+    // Steps land in jnlp by default, which carries no docker binary, so the
+    // client container is named as the default instead.
     agent {
         kubernetes {
-            yaml '''
-apiVersion: v1
-kind: Pod
-spec:
-  containers:
-  - name: dind
-    image: docker:dind
-    securityContext:
-      privileged: true
-    env:
-    - name: DOCKER_TLS_CERTDIR
-      value: ""
-    volumeMounts:
-    - name: docker-storage
-      mountPath: /var/lib/docker
-  volumes:
-  - name: docker-storage
-    emptyDir: {}
-'''
-            defaultContainer 'dind'
+            inheritFrom 'docker-arm64'
+            defaultContainer 'docker'
         }
     }
 
@@ -29,9 +15,25 @@ spec:
     }
 
     stages {
+        // The Kubernetes plugin starts the build as soon as the containers are
+        // running, and the daemon next door needs about 17 seconds beyond that.
+        // Without this wait the first docker command fails on a cold pod.
+        stage('Wait for the Docker daemon') {
+            steps {
+                sh "timeout 120 sh -c 'until docker info >/dev/null 2>&1; do sleep 2; done'"
+            }
+        }
+
         stage('Build') {
             steps {
-                sh "docker build -t ${IMAGE}:${GIT_COMMIT[0..6]} ."
+                // Set here rather than in the environment block above. That
+                // block is evaluated before the checkout populates GIT_COMMIT,
+                // which would tag the image from the string "null" instead of
+                // failing.
+                script {
+                    env.TAG = env.GIT_COMMIT.take(7)
+                }
+                sh "docker build -t ${IMAGE}:${TAG} ."
             }
         }
 
@@ -43,9 +45,18 @@ spec:
                     passwordVariable: 'DH_TOKEN'
                 )]) {
                     sh 'echo $DH_TOKEN | docker login -u $DH_USER --password-stdin'
-                    sh "docker push ${IMAGE}:${GIT_COMMIT[0..6]}"
+                    sh "docker push ${IMAGE}:${TAG}"
                 }
             }
+        }
+    }
+
+    post {
+        // The credential is written to the container's Docker config by the
+        // login above. The pod is deleted at the end of every build, so this
+        // only matters if podRetention ever changes.
+        always {
+            sh 'docker logout || true'
         }
     }
 }
